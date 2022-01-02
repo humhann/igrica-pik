@@ -78,7 +78,7 @@ struct Enemy enemies[ENEMIES_SIZE] = {
 };
 
 // Used for random seed
-const int Pin_Analog_Empty = 13;
+const int Pin_Empty = 13;
 
 void setup() {
   // Debugging
@@ -96,7 +96,7 @@ void setup() {
   pinMode(Pin_Rotary_SW, INPUT);
   digitalWrite(Pin_Rotary_SW, HIGH); // Pull-Up resistor for switch
   rotation = digitalRead(Pin_Rotary_CLK);
-  randomSeed(analogRead(Pin_Analog_Empty));
+  randomSeed(analogRead(Pin_Empty));
 
   // New game
   initializeGame(true);
