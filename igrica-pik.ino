@@ -1,32 +1,32 @@
 #include "LedControl.h"
 #include "pitches.h"
 
-/*
- Now we need a LedControl to work with.
- ***** These pin numbers will probably not work with your hardware *****
- pin 12 is connected to the DataIn 
- pin 11 is connected to LOAD(CS)
- pin 10 is connected to the CLK 
- We have only a single MAX72XX.
- */
-LedControl lc=LedControl(12,10,11,1);
+// MAX7219 LED Module
+const int Pin_LED_DIN = 12;
+const int Pin_LED_CLK = 10;
+const int Pin_LED_CS = 11;
+LedControl lc=LedControl(Pin_LED_DIN, Pin_LED_CLK, Pin_LED_CS, 1);
 
-/* we always wait a bit between updates of the display */
-unsigned long delaytime2=32;
+// Rotary encoder module
+const int Pin_Rotary_CLK = 2;
+const int Pin_Rotary_DT = 3;
+const int Pin_Rotary_SW = 4;
 
-// Rotary module
-const int Pin_CLK = 2;  // clk on encoder
-const int Pin_DT = 3;  // DT on encoder
-const int Pin_SW = 4;  // SW on encoder
+// Passive buzzer
+const int Pin_Buzzer = 8;
+const int WIN_MELODY_SIZE = 8;
+const int LOOSE_MELODY_SIZE = 3;
+int winMelody[WIN_MELODY_SIZE] = { NOTE_C5, NOTE_D5, NOTE_E5, NOTE_F5, NOTE_G5, NOTE_A5, NOTE_B5, NOTE_C6 };
+int looseMelody[LOOSE_MELODY_SIZE] = { NOTE_E4, NOTE_D4, NOTE_C4 };
 
-int DotPosition = 0;
-int x = 0;
-int y = 0;
+// Player position, rotary encoder module movement and button
+int playerPosition = 0;
 int rotation;  
 int value;
-boolean LeftRight;
+boolean isClockwise;
+boolean buttonPressed = false;
 
-// Map
+// Map path (spiral pattern)
 const int xMap[64] = {
   0, 1, 2, 3, 4, 5, 6, 7,
   7, 7, 7, 7, 7, 7, 7,
@@ -41,8 +41,9 @@ const int xMap[64] = {
   4, 3, 2,
   2, 2,
   3, 4,
-  4, 3
+  4, 3,
 };
+
 const int yMap[64] = {
   0, 0, 0, 0, 0, 0, 0, 0,
   1, 2, 3, 4, 5, 6, 7,
@@ -57,7 +58,7 @@ const int yMap[64] = {
   5, 5, 5,
   4, 3,
   3, 3,
-  4, 4
+  4, 4,
 };
 
 // Enemies
@@ -67,6 +68,7 @@ struct Enemy {
 };
 
 const int ENEMIES_SIZE = 5;
+
 struct Enemy enemies[ENEMIES_SIZE] = {
   { 7, true },
   { 12, true },
@@ -75,51 +77,38 @@ struct Enemy enemies[ENEMIES_SIZE] = {
   { 58, true },
 };
 
-// Non-blocking delays
-// Generally, you should use "unsigned long" for variables that hold time
-// The value will quickly become too large for an int to store
-unsigned long previousMillisDotBlinking = 0;        // will store last time LED was updated
-const long intervalDotBlinking = 300;
-
-// Passive buzzer
-const int Pin_Buzzer = 8;
-const int WIN_MELODY_SIZE = 8;
-const int LOOSE_MELODY_SIZE = 3;
-int winMelody[WIN_MELODY_SIZE] = { NOTE_C5, NOTE_D5, NOTE_E5, NOTE_F5, NOTE_G5, NOTE_A5, NOTE_B5, NOTE_C6 };
-int looseMelody[LOOSE_MELODY_SIZE] = { NOTE_E4, NOTE_D4, NOTE_C4 };
-
 // Used for random seed
-const int Pin_Empty = 13;
+const int Pin_Analog_Empty = 13;
 
 void setup() {
-  // TODO: debugging only
-  Serial.begin(9600);
-  /*
-   The MAX72XX is in power-saving mode on startup,
-   we have to do a wakeup call
-   */
-  lc.shutdown(0,false);
-  /* Set the brightness to a medium values */
-  lc.setIntensity(0,2);
-  /* and clear the display */
-  // lc.clearDisplay(0);
+  // Debugging
+  // Serial.begin(9600);
+  
+  // The MAX72XX is in power-saving mode on startup, we have to do a wakeup call
+  lc.shutdown(0, false);
+  
+  // Set LED brightness
+  lc.setIntensity(0, 1);
 
-  pinMode(Pin_CLK,INPUT);
-  pinMode(Pin_DT,INPUT);
-  pinMode(Pin_SW,INPUT);
-  digitalWrite(Pin_SW, HIGH); // Pull-Up resistor for switch
-  rotation = digitalRead(Pin_CLK);
+  // Pins
+  pinMode(Pin_Rotary_CLK, INPUT);
+  pinMode(Pin_Rotary_DT, INPUT);
+  pinMode(Pin_Rotary_SW, INPUT);
+  digitalWrite(Pin_Rotary_SW, HIGH); // Pull-Up resistor for switch
+  rotation = digitalRead(Pin_Rotary_CLK);
+  randomSeed(analogRead(Pin_Analog_Empty));
 
-  randomSeed(analogRead(Pin_Empty));
+  // New game
   initializeGame(true);
 }
 
 void initializeGame(boolean randomizeEnemyPositions) {
   lc.clearDisplay(0);
-  DotPosition = 0;
-  lc.setLed(0, xMap[DotPosition], yMap[DotPosition], true);
+  playerPosition = 0;
+  lc.setLed(0, xMap[playerPosition], yMap[playerPosition], true);
+
   // Set enemies
-  for (int i=0; i<ENEMIES_SIZE; i++) {
+  for (int i = 0; i < ENEMIES_SIZE; i++) {
     enemies[i].alive = true;
 
     if (randomizeEnemyPositions) {
@@ -131,112 +120,101 @@ void initializeGame(boolean randomizeEnemyPositions) {
 }
 
 void winSequence() {
+  const int TONE_DURATION = 500;
+  
   for (int thisNote = 0; thisNote < WIN_MELODY_SIZE; thisNote++) {
-    // Pin_Buzzer output the voice, every scale is 0.5 sencond
-    tone(Pin_Buzzer, winMelody[thisNote], 500);
+    tone(Pin_Buzzer, winMelody[thisNote], TONE_DURATION);
 
     // Blink display
-    for(int row=0;row<8;row++) {
-      for(int col=0;col<8;col++) {
-        lc.setLed(0,row,col,true);
+    for (int x = 0; x < 8; x++) {
+      for (int y = 0; y < 8; y++) {
+        lc.setLed(0, x, y, true);
       }
     }
   
     // Output the voice after several minutes
-    delay(250);
+    delay(TONE_DURATION / 2);
   
     // Blink display
-    for(int row=0;row<8;row++) {
-      for(int col=0;col<8;col++) {
-        lc.setLed(0,row,col,false);
+    for (int x = 0; x < 8; x++) {
+      for (int y = 0; y < 8; y++) {
+        lc.setLed(0, x, y, false);
       }
     }
   
-    // Output the voice after several minutes
-    delay(250);
+    delay(TONE_DURATION / 2);
   }
 }
 
 void looseSequence() {
+  const int TONE_DURATION = 500;
+ 
   for (int thisNote = 0; thisNote < LOOSE_MELODY_SIZE; thisNote++) {
-    // Pin_Buzzer output the voice, every scale is 0.5 sencond
-    tone(Pin_Buzzer, looseMelody[thisNote], 500);
-
-    // Output the voice after several minutes
-    delay(500);
+    tone(Pin_Buzzer, looseMelody[thisNote], TONE_DURATION);
+    delay(TONE_DURATION);
   }
 }
 
-/* 
- This function will light up every Led on the matrix.
- The led will blink along with the row-number.
- row number 4 (index==3) will blink 4 times etc.
- */
-void single() {
-  // check to see if it's time to blink the LED; that is, if the difference
-  // between the current time and last time you blinked the LED is bigger than
-  // the interval at which you want to blink the LED.
-  unsigned long currentMillis = millis();
-  
-  value = digitalRead(Pin_CLK);
-  if (value != rotation){ // we use the DT pin to find out which way we turning.
-    if (digitalRead(Pin_DT) != value) {  // Clockwise
-      LeftRight = true;
+void loop() {
+  // we use the DT pin to find out which way we turning
+  value = digitalRead(Pin_Rotary_CLK);
 
-      if (DotPosition < 63) {
-        DotPosition ++;
+  if (value != rotation) {
+    if (digitalRead(Pin_Rotary_DT) != value) {
+      // Clockwise
+      isClockwise = true;
+
+      if (playerPosition < 63) {
+        playerPosition ++;
       }
-    } else { //Counterclockwise
-      LeftRight = false;
+    } else {
+      // Counterclockwise
+      isClockwise = false;
 
-      if (DotPosition > 0) {
-        DotPosition--;
+      if (playerPosition > 0) {
+        playerPosition--;
       }
     }
 
-    // Get x and y from DotPosition
-    x = xMap[DotPosition];
-    y = yMap[DotPosition];
-
-    Serial.print("Dot position: ");
-    Serial.print(DotPosition);
+    // Debugging
+    /* Serial.print("Player position: ");
+    Serial.print(playerPosition);
     Serial.print(", x");
-    Serial.print(x);
+    Serial.print(xMap[playerPosition]);
     Serial.print(", y");
-    Serial.println(y);
+    Serial.println(yMap[playerPosition]); */
   }
+
   rotation = value;
 
-  lc.setLed(0,x,y,true);
+  // Draw player position
+  lc.setLed(0, xMap[playerPosition], yMap[playerPosition], true);
 
-  boolean buttonPressed = false;
-  if (!digitalRead(Pin_SW)) {
-    // Serial.print("BUTTON PRESSED!");
+  if (!digitalRead(Pin_Rotary_SW)) {
     buttonPressed = true;
+  } else {
+    buttonPressed = false;
   }
 
-  for (int i=0; i<ENEMIES_SIZE; i++) {
+  for (int i = 0; i < ENEMIES_SIZE; i++) {
     // Shoot enemy
-    if (buttonPressed && (DotPosition + 2 == enemies[i].position || DotPosition + 1 == enemies[i].position)) {
+    if (buttonPressed && (playerPosition + 2 == enemies[i].position || playerPosition + 1 == enemies[i].position)) {
       lc.setLed(0, xMap[enemies[i].position], yMap[enemies[i].position], false);
       enemies[i].alive = false;
     }
 
     // Check if enemy is shooting
-    if (enemies[i].alive && enemies[i].position <= DotPosition) {
-      // Player dies, reset game
+    if (enemies[i].alive && enemies[i].position <= playerPosition) {
+      // Player dies, reset game using same enemy positions (no randomizeEnemyPositions)
       looseSequence();
       initializeGame(false);
     }
   }
 
   // Win 
-  if (DotPosition == 63) {
+  if (playerPosition == 63) {
+    // New game
     winSequence();
     initializeGame(true);
   }
-}
-
-void loop() {
-  single();
 }
