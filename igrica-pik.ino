@@ -132,7 +132,6 @@ void winSequence() {
       }
     }
   
-    // Output the voice after several minutes
     delay(TONE_DURATION / 2);
   
     // Blink display
