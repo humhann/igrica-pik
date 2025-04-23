@@ -112,7 +112,22 @@ void initializeGame(boolean randomizeEnemyPositions) {
     enemies[i].alive = true;
 
     if (randomizeEnemyPositions) {
-      enemies[i].position = random(2, 63);
+     do {
+      int proposedPosition = random(2, 63);
+
+       for (int j = 0; j < i; j++) {
+         // Check if another enemy is already occupying the position
+         if (enemies[j].position == proposedPosition) {
+           proposedPosition = -1;
+           break;
+         }
+       }
+
+       if (proposedPosition != -1) {
+         enemies[i].position = proposedPosition;
+         break;
+       }
+     } while (true)
     }
     
     lc.setLed(0, xMap[enemies[i].position], yMap[enemies[i].position], true);
