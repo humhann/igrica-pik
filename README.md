@@ -23,3 +23,5 @@ Source [Firtzing](https://fritzing.org) file for this wiring diagram can be foun
 ## Assembled project
 
 ![assembled project](docs/assembled-project.jpg)
+
+![assembled project](docs/assembled-project-2.png)
